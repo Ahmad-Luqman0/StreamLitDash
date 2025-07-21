@@ -4,31 +4,37 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import gdown
 import zipfile
+import shutil
 
-# -----------------------------
-# ✅ SETTINGS
-# -----------------------------
-BASE_PATH = "Logs"  # Logs folder after extraction
-DRIVE_ZIP_URL = "https://drive.google.com/uc?id=1bgyqkfQCcTpGfbktc75gJrN1j5tj7tJ9"  # ✅ REPLACE WITH YOUR ZIP LINK
-ZIP_PATH = "Logs.zip"
+# ---------- DOWNLOAD LOGS FROM GOOGLE DRIVE ----------
+DRIVE_URL = "https://drive.google.com/drive/folders/1bgyqkfQCcTpGfbktc75gJrN1j5tj7tJ9"
+LOGS_ZIP = "logs.zip"
+BASE_PATH = "Logs"
 
-# -----------------------------
-# ✅ DOWNLOAD & EXTRACT LOGS (ONLY FIRST RUN)
-# -----------------------------
-def ensure_logs_available():
-    if not os.path.exists(BASE_PATH):
-        st.write("⏳ Downloading Logs.zip from Google Drive (first run only)...")
-        gdown.download(DRIVE_ZIP_URL, ZIP_PATH, quiet=False)
-        st.write("✅ Download complete! Extracting...")
-        with zipfile.ZipFile(ZIP_PATH, "r") as zip_ref:
-            zip_ref.extractall(".")
-        st.write("✅ Logs ready!")
 
-ensure_logs_available()
+def download_logs_from_drive():
+    """Download and extract Logs folder from Google Drive if not already present."""
+    if os.path.exists(BASE_PATH):
+        return  # Already downloaded
 
-# -----------------------------
-# ✅ DATA LOADING FUNCTION
-# -----------------------------
+    st.info("⏳ Downloading Logs folder from Google Drive... (only first run)")
+
+    # Convert folder URL to sharable gdown link (export as zip)
+    gdown.download_folder(DRIVE_URL, quiet=False, use_cookies=False)
+
+    # If Google Drive is provided as a zip manually, handle it:
+    if LOGS_ZIP in os.listdir():
+        with zipfile.ZipFile(LOGS_ZIP, "r") as zip_ref:
+            zip_ref.extractall()
+        os.remove(LOGS_ZIP)
+
+    st.success("✅ Logs downloaded successfully!")
+
+
+# Download if needed
+download_logs_from_drive()
+
+
 @st.cache_data
 def load_all_data(base_path):
     """Reads all CSVs, adds Day/Night classification, and links images."""
@@ -44,7 +50,9 @@ def load_all_data(base_path):
             if not os.path.isdir(folder_path):
                 continue
 
-            csv_files = sorted([f for f in os.listdir(folder_path) if f.endswith(".csv")])
+            csv_files = sorted(
+                [f for f in os.listdir(folder_path) if f.endswith(".csv")]
+            )
 
             for i, csv_file in enumerate(csv_files):
                 csv_path = os.path.join(folder_path, csv_file)
@@ -57,24 +65,33 @@ def load_all_data(base_path):
 
                     # ---------- ENTRY LOGIC ----------
                     if mode == "entry":
-                        df["time_of_day"] = "Night" if i >= len(csv_files) - 3 else "Day"
+                        df["time_of_day"] = (
+                            "Night" if i >= len(csv_files) - 3 else "Day"
+                        )
                         csv_prefix = csv_file.split("_entry_log")[0]
-                        images_folder = os.path.join(folder_path, f"{csv_prefix}_images")
+                        images_folder = os.path.join(
+                            folder_path, f"{csv_prefix}_images"
+                        )
 
-                    # ---------- EXIT LOGIC ----------
-                    else:  # exit
+                    # ---------- EXIT LOGIC (FIXED) ----------
+                    else:
                         if csv_file.startswith("night_exit_log"):
                             df["time_of_day"] = "Night"
                             images_folder = os.path.join(folder_path, "night_images")
                         else:
                             df["time_of_day"] = "Day"
-                            images_folder = os.path.join(folder_path, f"{folder}_images")
+                            csv_prefix = csv_file.split("_exit_log")[0]
+                            images_folder = os.path.join(
+                                folder_path, f"{csv_prefix}_images"
+                            )
 
                     if "plate" not in df.columns:
                         df["plate"] = None
 
                     if images_folder and os.path.exists(images_folder):
-                        df["image_path"] = df["image"].apply(lambda x: os.path.join(images_folder, x))
+                        df["image_path"] = df["image"].apply(
+                            lambda x: os.path.join(images_folder, x)
+                        )
                     else:
                         df["image_path"] = None
 
@@ -86,28 +103,31 @@ def load_all_data(base_path):
 
     return pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
 
-# -----------------------------
-# ✅ LOAD DATA
-# -----------------------------
+
+# ---------- LOAD DATA ----------
 df_all = load_all_data(BASE_PATH)
 
-st.title("🚗 Vehicle Entry/Exit Dashboard")
+st.title("Vehicle Entry/Exit Dashboard")
 
 if df_all.empty:
     st.warning("No valid data found!")
     st.stop()
 
-# -----------------------------
-# ✅ FILTERS
-# -----------------------------
+# ---------- FILTERS ----------
 st.sidebar.header("Filters")
 
 available_dates = sorted(df_all["date"].unique())
-selected_dates = st.sidebar.multiselect("Select Dates:", options=available_dates, default=available_dates)
+selected_dates = st.sidebar.multiselect(
+    "Select Dates:", options=available_dates, default=available_dates
+)
 time_options = ["Day", "Night"]
-selected_time = st.sidebar.multiselect("Select Time of Day:", options=time_options, default=time_options)
+selected_time = st.sidebar.multiselect(
+    "Select Time of Day:", options=time_options, default=time_options
+)
 mode_options = ["Entry", "Exit"]
-selected_mode = st.sidebar.multiselect("Select Mode:", options=mode_options, default=mode_options)
+selected_mode = st.sidebar.multiselect(
+    "Select Mode:", options=mode_options, default=mode_options
+)
 
 filtered_df = df_all[
     (df_all["date"].isin(selected_dates))
@@ -115,14 +135,10 @@ filtered_df = df_all[
     & (df_all["mode"].isin(selected_mode))
 ]
 
-# -----------------------------
-# ✅ KPI METRICS
-# -----------------------------
+# ---------- KPI METRICS ----------
 st.metric("Total Vehicles", len(filtered_df))
 
-# -----------------------------
-# ✅ DAILY TREND (MATPLOTLIB)
-# -----------------------------
+# ---------- DAILY TREND (MATPLOTLIB) ----------
 daily_counts = (
     filtered_df.groupby(["date", "time_of_day", "mode"])
     .size()
@@ -131,12 +147,15 @@ daily_counts = (
 
 if not daily_counts.empty:
     st.subheader("📊 Daily Vehicle Count (Day vs Night, Entry vs Exit)")
+
     for mode in ["Entry", "Exit"]:
         mode_data = daily_counts[daily_counts["mode"] == mode]
         if mode_data.empty:
             continue
 
-        pivot_df = mode_data.pivot(index="date", columns="time_of_day", values="vehicle_count").fillna(0)
+        pivot_df = mode_data.pivot(
+            index="date", columns="time_of_day", values="vehicle_count"
+        ).fillna(0)
 
         fig, ax = plt.subplots(figsize=(8, 4))
         pivot_df.plot(kind="bar", ax=ax, color=["#1f77b4", "#ff7f0e"])
@@ -147,13 +166,13 @@ if not daily_counts.empty:
         ax.legend(title="Time of Day")
         st.pyplot(fig)
 
-# -----------------------------
-# ✅ TABLE WITH MULTIPLE SELECTION
-# -----------------------------
+# ---------- TABLE WITH MULTIPLE SELECTION ----------
 st.subheader("📋 Vehicles Table (Select to View Images)")
 
 if not filtered_df.empty:
-    table_df = filtered_df[["id", "plate", "mode", "date", "time_of_day", "image_path"]].reset_index(drop=True)
+    table_df = filtered_df[
+        ["id", "plate", "mode", "date", "time_of_day", "image_path"]
+    ].reset_index(drop=True)
 
     if "selected_rows" not in st.session_state:
         st.session_state.selected_rows = []
@@ -174,7 +193,9 @@ if not filtered_df.empty:
         key="table_editor",
     )
 
-    st.session_state.selected_rows = list(edited_df[edited_df["View Image"] == True].index)
+    st.session_state.selected_rows = list(
+        edited_df[edited_df["View Image"] == True].index
+    )
 
     if st.button("🧹 Clear All Selections"):
         st.session_state.selected_rows = []
