@@ -1,45 +1,49 @@
 import os
-import requests
-import zipfile
 import re
+import zipfile
+import requests
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
 
-BASE_PATH = "Logs"
+# ---------------- SETTINGS ----------------
+BASE_PATH = "Logs"  # Extracted logs folder
 ZIP_FILE = "logs.zip"
-
 ONEDRIVE_URL = "https://1drv.ms/u/c/df58e066d83ecacc/EU4eZHwPkytOk-PdIkXCaQEBGn2Nk9f0tXSpkl7DoSKyLg?e=oLJ1NB"
 
-
+# ---------------- DOWNLOAD & EXTRACT LOGS ----------------
 @st.cache_data(show_spinner="📥 Downloading and extracting logs...")
 def download_and_extract_logs():
-    # ✅ Convert OneDrive share link to direct download link
+    """Downloads logs.zip from OneDrive and extracts it."""
     def convert_onedrive_to_direct(onedrive_url: str) -> str:
-        match = re.search(r"1drv\.ms/\w+/([^?]+)", onedrive_url)
-        if not match:
-            return onedrive_url  # fallback
-        return f"https://api.onedrive.com/v1.0/shares/u!{onedrive_url.split('/')[-1].split('?')[0]}/root/content"
+        # Convert shared URL to direct download (OneDrive API)
+        base_id = onedrive_url.split("/")[-1].split("?")[0]
+        return f"https://api.onedrive.com/v1.0/shares/u!{base_id}/root/content"
 
-    direct_url = convert_onedrive_to_direct(ONEDRIVE_URL)
-
-    if not os.path.exists(ZIP_FILE):
+    if not os.path.exists(BASE_PATH):
+        direct_url = convert_onedrive_to_direct(ONEDRIVE_URL)
         st.info("📥 Downloading logs.zip from OneDrive...")
+
         response = requests.get(direct_url, allow_redirects=True)
         if response.status_code != 200:
-            st.error("❌ Failed to download logs.zip. Check the link.")
-            return
+            st.error("❌ Failed to download logs.zip. Check the OneDrive link.")
+            return False
+
         with open(ZIP_FILE, "wb") as f:
             f.write(response.content)
 
-    st.info("📂 Extracting logs.zip...")
-    with zipfile.ZipFile(ZIP_FILE, "r") as zip_ref:
-        zip_ref.extractall(".")
-    st.success("✅ Logs downloaded & extracted successfully!")
+        st.info("📂 Extracting logs.zip...")
+        with zipfile.ZipFile(ZIP_FILE, "r") as zip_ref:
+            zip_ref.extractall(".")
+        st.success("✅ Logs downloaded & extracted successfully!")
+
+    return True
 
 
-# ---------- LOAD DATA ----------
+# ---------------- LOAD DATA ----------------
 @st.cache_data
 def load_all_data(base_path):
+    """Reads all CSVs, adds Day/Night classification, and links images."""
     all_data = []
 
     for mode in ["entry", "exit"]:
@@ -52,9 +56,7 @@ def load_all_data(base_path):
             if not os.path.isdir(folder_path):
                 continue
 
-            csv_files = sorted(
-                [f for f in os.listdir(folder_path) if f.endswith(".csv")]
-            )
+            csv_files = sorted([f for f in os.listdir(folder_path) if f.endswith(".csv")])
 
             for i, csv_file in enumerate(csv_files):
                 csv_path = os.path.join(folder_path, csv_file)
@@ -65,63 +67,47 @@ def load_all_data(base_path):
 
                     df["date"] = pd.to_datetime(folder, format="%d-%m-%Y").date()
 
-                    # ENTRY LOGIC
+                    # ENTRY
                     if mode == "entry":
-                        df["time_of_day"] = (
-                            "Night" if i >= len(csv_files) - 3 else "Day"
-                        )
+                        df["time_of_day"] = "Night" if i >= len(csv_files) - 3 else "Day"
                         csv_prefix = csv_file.split("_entry_log")[0]
-                        images_folder = os.path.join(
-                            folder_path, f"{csv_prefix}_images"
-                        )
+                        images_folder = os.path.join(folder_path, f"{csv_prefix}_images")
 
-                    # EXIT LOGIC
+                    # EXIT
                     else:
                         if "night" in csv_file.lower():
                             df["time_of_day"] = "Night"
-                            night_folder = os.path.join(
-                                folder_path, f"{folder} night_images"
-                            )
-                            images_folder = (
-                                night_folder
-                                if os.path.exists(night_folder)
-                                else os.path.join(folder_path, "night_images")
-                            )
+                            night_folder = os.path.join(folder_path, f"{folder} night_images")
+                            images_folder = night_folder if os.path.exists(night_folder) else os.path.join(folder_path, "night_images")
                         else:
                             df["time_of_day"] = "Day"
-                            day_folder = os.path.join(
-                                folder_path, f"{folder} day_images"
-                            )
-                            images_folder = (
-                                day_folder
-                                if os.path.exists(day_folder)
-                                else os.path.join(
-                                    folder_path,
-                                    f"{csv_file.split('_exit_log')[0]}_images",
-                                )
-                            )
+                            day_folder = os.path.join(folder_path, f"{folder} day_images")
+                            images_folder = day_folder if os.path.exists(day_folder) else os.path.join(folder_path, f"{csv_file.split('_exit_log')[0]}_images")
 
                     if "plate" not in df.columns:
                         df["plate"] = None
 
-                    df["image_path"] = (
-                        df["image"].apply(lambda x: os.path.join(images_folder, x))
-                        if images_folder and os.path.exists(images_folder)
-                        else None
-                    )
+                    if images_folder and os.path.exists(images_folder):
+                        df["image_path"] = df["image"].apply(lambda x: os.path.join(images_folder, x))
+                    else:
+                        df["image_path"] = None
 
                     df["mode"] = mode.capitalize()
                     all_data.append(df)
+
                 except Exception as e:
                     print(f"Skipping {csv_path}: {e}")
 
     return pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
 
 
-df_all = load_all_data(BASE_PATH)
-
-# ---------- STREAMLIT UI ----------
+# ---------------- MAIN APP ----------------
 st.title("🚗 Vehicle Entry/Exit Dashboard")
+
+if not download_and_extract_logs():
+    st.stop()
+
+df_all = load_all_data(BASE_PATH)
 
 if df_all.empty:
     st.warning("No valid data found!")
