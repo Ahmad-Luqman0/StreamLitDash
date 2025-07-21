@@ -1,10 +1,38 @@
 import os
 import pandas as pd
 import streamlit as st
-import plotly.express as px
+import matplotlib.pyplot as plt
+import gdown
+import zipfile
+import shutil
 
-# ---------- SETTINGS ----------
-BASE_PATH = "Logs"  # ✅ Base folder (with entry and exit inside)
+# ---------- DOWNLOAD LOGS FROM GOOGLE DRIVE ----------
+DRIVE_URL = "https://drive.google.com/drive/folders/1bgyqkfQCcTpGfbktc75gJrN1j5tj7tJ9"
+LOGS_ZIP = "logs.zip"
+BASE_PATH = "Logs"
+
+
+def download_logs_from_drive():
+    """Download and extract Logs folder from Google Drive if not already present."""
+    if os.path.exists(BASE_PATH):
+        return  # Already downloaded
+
+    st.info("⏳ Downloading Logs folder from Google Drive... (only first run)")
+
+    # Convert folder URL to sharable gdown link (export as zip)
+    gdown.download_folder(DRIVE_URL, quiet=False, use_cookies=False)
+
+    # If Google Drive is provided as a zip manually, handle it:
+    if LOGS_ZIP in os.listdir():
+        with zipfile.ZipFile(LOGS_ZIP, "r") as zip_ref:
+            zip_ref.extractall()
+        os.remove(LOGS_ZIP)
+
+    st.success("✅ Logs downloaded successfully!")
+
+
+# Download if needed
+download_logs_from_drive()
 
 
 @st.cache_data
@@ -35,7 +63,7 @@ def load_all_data(base_path):
 
                     df["date"] = pd.to_datetime(folder, format="%d-%m-%Y").date()
 
-                    # ---------- ENTRY LOGIC (unchanged) ----------
+                    # ---------- ENTRY LOGIC ----------
                     if mode == "entry":
                         df["time_of_day"] = (
                             "Night" if i >= len(csv_files) - 3 else "Day"
@@ -45,15 +73,16 @@ def load_all_data(base_path):
                             folder_path, f"{csv_prefix}_images"
                         )
 
-                    # ---------- EXIT LOGIC (NEW) ----------
-                    else:  # exit
+                    # ---------- EXIT LOGIC (FIXED) ----------
+                    else:
                         if csv_file.startswith("night_exit_log"):
                             df["time_of_day"] = "Night"
                             images_folder = os.path.join(folder_path, "night_images")
                         else:
                             df["time_of_day"] = "Day"
+                            csv_prefix = csv_file.split("_exit_log")[0]
                             images_folder = os.path.join(
-                                folder_path, f"{folder}_images"
+                                folder_path, f"{csv_prefix}_images"
                             )
 
                     if "plate" not in df.columns:
@@ -109,7 +138,7 @@ filtered_df = df_all[
 # ---------- KPI METRICS ----------
 st.metric("Total Vehicles", len(filtered_df))
 
-# ---------- DAILY TREND ----------
+# ---------- DAILY TREND (MATPLOTLIB) ----------
 daily_counts = (
     filtered_df.groupby(["date", "time_of_day", "mode"])
     .size()
@@ -117,16 +146,25 @@ daily_counts = (
 )
 
 if not daily_counts.empty:
-    fig = px.bar(
-        daily_counts,
-        x="date",
-        y="vehicle_count",
-        color="time_of_day",
-        barmode="group",
-        facet_col="mode",
-        title="Daily Vehicle Count (Day vs Night, Entry vs Exit)",
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    st.subheader("📊 Daily Vehicle Count (Day vs Night, Entry vs Exit)")
+
+    for mode in ["Entry", "Exit"]:
+        mode_data = daily_counts[daily_counts["mode"] == mode]
+        if mode_data.empty:
+            continue
+
+        pivot_df = mode_data.pivot(
+            index="date", columns="time_of_day", values="vehicle_count"
+        ).fillna(0)
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        pivot_df.plot(kind="bar", ax=ax, color=["#1f77b4", "#ff7f0e"])
+        ax.set_title(f"{mode} Vehicles")
+        ax.set_ylabel("Vehicle Count")
+        ax.set_xlabel("Date")
+        ax.tick_params(axis="x", rotation=90)
+        ax.legend(title="Time of Day")
+        st.pyplot(fig)
 
 # ---------- TABLE WITH MULTIPLE SELECTION ----------
 st.subheader("📋 Vehicles Table (Select to View Images)")
@@ -136,7 +174,6 @@ if not filtered_df.empty:
         ["id", "plate", "mode", "date", "time_of_day", "image_path"]
     ].reset_index(drop=True)
 
-    # ✅ Maintain selected checkboxes in session state
     if "selected_rows" not in st.session_state:
         st.session_state.selected_rows = []
 
