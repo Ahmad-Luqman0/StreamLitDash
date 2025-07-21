@@ -1,25 +1,32 @@
 import os
-import pandas as pd
-import streamlit as st
-import matplotlib.pyplot as plt
 import requests
 import zipfile
+import re
+import streamlit as st
 
-# ---------- SETTINGS ----------
-BASE_PATH = "Logs"  # Folder to extract logs into
-ONEDRIVE_URL = "https://1drv.ms/u/c/df58e066d83ecacc/EU4eZHwPkytOk-PdIkXCaQEBGn2Nk9f0tXSpkl7DoSKyLg?e=oLJ1NB"
+BASE_PATH = "Logs"
 ZIP_FILE = "logs.zip"
 
+ONEDRIVE_URL = "https://1drv.ms/u/c/df58e066d83ecacc/EU4eZHwPkytOk-PdIkXCaQEBGn2Nk9f0tXSpkl7DoSKyLg?e=oLJ1NB"
 
-# ---------- DOWNLOAD & EXTRACT LOGS ----------
-@st.cache_data(show_spinner="⏳ Downloading and extracting logs...")
+
+@st.cache_data(show_spinner="📥 Downloading and extracting logs...")
 def download_and_extract_logs():
-    if not os.path.exists(BASE_PATH):
-        os.makedirs(BASE_PATH, exist_ok=True)
+    # ✅ Convert OneDrive share link to direct download link
+    def convert_onedrive_to_direct(onedrive_url: str) -> str:
+        match = re.search(r"1drv\.ms/\w+/([^?]+)", onedrive_url)
+        if not match:
+            return onedrive_url  # fallback
+        return f"https://api.onedrive.com/v1.0/shares/u!{onedrive_url.split('/')[-1].split('?')[0]}/root/content"
+
+    direct_url = convert_onedrive_to_direct(ONEDRIVE_URL)
 
     if not os.path.exists(ZIP_FILE):
         st.info("📥 Downloading logs.zip from OneDrive...")
-        response = requests.get(ONEDRIVE_URL)
+        response = requests.get(direct_url, allow_redirects=True)
+        if response.status_code != 200:
+            st.error("❌ Failed to download logs.zip. Check the link.")
+            return
         with open(ZIP_FILE, "wb") as f:
             f.write(response.content)
 
@@ -27,9 +34,6 @@ def download_and_extract_logs():
     with zipfile.ZipFile(ZIP_FILE, "r") as zip_ref:
         zip_ref.extractall(".")
     st.success("✅ Logs downloaded & extracted successfully!")
-
-
-download_and_extract_logs()
 
 
 # ---------- LOAD DATA ----------
