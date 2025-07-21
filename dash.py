@@ -2,6 +2,7 @@ import os
 import requests
 import zipfile
 import re
+import pandas as pd
 import streamlit as st
 
 BASE_PATH = "Logs"
