@@ -107,6 +107,21 @@ st.title("🚗 Vehicle Entry/Exit Dashboard")
 if not download_and_extract_logs():
     st.stop()
 
+import os
+
+st.write("📂 Current working directory:", os.getcwd())
+st.write("📂 Folders in root:", os.listdir("."))
+
+if os.path.exists(BASE_PATH):
+    st.write(f"📂 Inside {BASE_PATH}:", os.listdir(BASE_PATH))
+    if os.path.exists(os.path.join(BASE_PATH, "entry")):
+        st.write("✅ Entry folder exists:", os.listdir(os.path.join(BASE_PATH, "entry")))
+    if os.path.exists(os.path.join(BASE_PATH, "exit")):
+        st.write("✅ Exit folder exists:", os.listdir(os.path.join(BASE_PATH, "exit")))
+else:
+    st.error(f"❌ {BASE_PATH} not found after extraction!")
+
+
 df_all = load_all_data(BASE_PATH)
 
 if df_all.empty:
