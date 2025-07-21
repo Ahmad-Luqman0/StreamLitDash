@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 # ---------------- SETTINGS ----------------
 BASE_PATH = "Logs"  # Extracted logs folder
 ZIP_FILE = "logs.zip"
-ONEDRIVE_URL = "https://1drv.ms/u/c/df58e066d83ecacc/EU4eZHwPkytOk-PdIkXCaQEBGn2Nk9f0tXSpkl7DoSKyLg?e=oLJ1NB"
+ONEDRIVE_URL = "https://onedrive.live.com/download?resid=DF58E066D83ECACC!EU4EzhwPkytOk-PdIkXCaQEBGn2Nk9f0tXSpkl7DoSKyLgs"
 
 # ---------------- DOWNLOAD & EXTRACT LOGS ----------------
 @st.cache_data(show_spinner="📥 Downloading and extracting logs...")
