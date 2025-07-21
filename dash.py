@@ -4,7 +4,7 @@ import streamlit as st
 import plotly.express as px
 
 # ---------- SETTINGS ----------
-BASE_PATH = "Logs"  # ✅ CHANGE THIS
+BASE_PATH = "Logs"  # ✅ Base folder (with entry and exit inside)
 
 
 @st.cache_data
@@ -12,9 +12,16 @@ def load_all_data(base_path):
     """Reads all CSVs, adds Day/Night classification, and links images."""
     all_data = []
 
-    for folder in os.listdir(base_path):
-        folder_path = os.path.join(base_path, folder)
-        if os.path.isdir(folder_path):
+    for mode in ["entry", "exit"]:
+        mode_path = os.path.join(base_path, mode)
+        if not os.path.exists(mode_path):
+            continue
+
+        for folder in os.listdir(mode_path):
+            folder_path = os.path.join(mode_path, folder)
+            if not os.path.isdir(folder_path):
+                continue
+
             csv_files = sorted(
                 [f for f in os.listdir(folder_path) if f.endswith(".csv")]
             )
@@ -27,21 +34,41 @@ def load_all_data(base_path):
                         continue
 
                     df["date"] = pd.to_datetime(folder, format="%d-%m-%Y").date()
-                    df["time_of_day"] = "Night" if i >= len(csv_files) - 3 else "Day"
+
+                    # ---------- ENTRY LOGIC (unchanged) ----------
+                    if mode == "entry":
+                        df["time_of_day"] = (
+                            "Night" if i >= len(csv_files) - 3 else "Day"
+                        )
+                        csv_prefix = csv_file.split("_entry_log")[0]
+                        images_folder = os.path.join(
+                            folder_path, f"{csv_prefix}_images"
+                        )
+
+                    # ---------- EXIT LOGIC (NEW) ----------
+                    else:  # exit
+                        if csv_file.startswith("night_exit_log"):
+                            df["time_of_day"] = "Night"
+                            images_folder = os.path.join(folder_path, "night_images")
+                        else:
+                            df["time_of_day"] = "Day"
+                            images_folder = os.path.join(
+                                folder_path, f"{folder}_images"
+                            )
+
                     if "plate" not in df.columns:
                         df["plate"] = None
 
-                    csv_prefix = csv_file.split("_entry_log")[0]
-                    images_folder = os.path.join(folder_path, f"{csv_prefix}_images")
-
-                    if os.path.exists(images_folder):
+                    if images_folder and os.path.exists(images_folder):
                         df["image_path"] = df["image"].apply(
                             lambda x: os.path.join(images_folder, x)
                         )
                     else:
                         df["image_path"] = None
 
+                    df["mode"] = mode.capitalize()
                     all_data.append(df)
+
                 except Exception as e:
                     print(f"Skipping {csv_path}: {e}")
 
@@ -68,9 +95,15 @@ time_options = ["Day", "Night"]
 selected_time = st.sidebar.multiselect(
     "Select Time of Day:", options=time_options, default=time_options
 )
+mode_options = ["Entry", "Exit"]
+selected_mode = st.sidebar.multiselect(
+    "Select Mode:", options=mode_options, default=mode_options
+)
 
 filtered_df = df_all[
-    (df_all["date"].isin(selected_dates)) & (df_all["time_of_day"].isin(selected_time))
+    (df_all["date"].isin(selected_dates))
+    & (df_all["time_of_day"].isin(selected_time))
+    & (df_all["mode"].isin(selected_mode))
 ]
 
 # ---------- KPI METRICS ----------
@@ -78,7 +111,7 @@ st.metric("Total Vehicles", len(filtered_df))
 
 # ---------- DAILY TREND ----------
 daily_counts = (
-    filtered_df.groupby(["date", "time_of_day"])
+    filtered_df.groupby(["date", "time_of_day", "mode"])
     .size()
     .reset_index(name="vehicle_count")
 )
@@ -90,7 +123,8 @@ if not daily_counts.empty:
         y="vehicle_count",
         color="time_of_day",
         barmode="group",
-        title="Daily Vehicle Count (Day vs Night)",
+        facet_col="mode",
+        title="Daily Vehicle Count (Day vs Night, Entry vs Exit)",
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -99,14 +133,13 @@ st.subheader("📋 Vehicles Table (Select to View Images)")
 
 if not filtered_df.empty:
     table_df = filtered_df[
-        ["id", "plate", "date", "time_of_day", "image_path"]
+        ["id", "plate", "mode", "date", "time_of_day", "image_path"]
     ].reset_index(drop=True)
 
     # ✅ Maintain selected checkboxes in session state
     if "selected_rows" not in st.session_state:
         st.session_state.selected_rows = []
 
-    # Add "View Image" column based on session state
     table_df["View Image"] = table_df.index.isin(st.session_state.selected_rows)
 
     edited_df = st.data_editor(
@@ -123,17 +156,14 @@ if not filtered_df.empty:
         key="table_editor",
     )
 
-    # ✅ Update session state with selected rows
     st.session_state.selected_rows = list(
         edited_df[edited_df["View Image"] == True].index
     )
 
-    # ✅ "Clear All Selections" Button
     if st.button("🧹 Clear All Selections"):
         st.session_state.selected_rows = []
         st.rerun()
 
-    # ✅ Display selected images
     if st.session_state.selected_rows:
         st.subheader("🖼️ Selected Vehicle Images")
         for idx in st.session_state.selected_rows:
@@ -142,11 +172,11 @@ if not filtered_df.empty:
                 st.image(
                     row["image_path"],
                     width=300,
-                    caption=f"Vehicle ID: {row['id']} | Plate: {row['plate']}",
+                    caption=f"{row['mode']} | Vehicle ID: {row['id']} | Plate: {row['plate']}",
                 )
             else:
                 st.warning(
-                    f"No image available for Vehicle ID: {row['id']} | Plate: {row['plate']}"
+                    f"No image available for {row['mode']} | Vehicle ID: {row['id']} | Plate: {row['plate']}"
                 )
     else:
         st.info("Select one or more vehicles to view their images.")
