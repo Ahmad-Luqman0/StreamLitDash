@@ -3,24 +3,32 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 import gdown
-from pathlib import Path
+import zipfile
 
-# ---------- SETTINGS ----------
-DRIVE_URL = "https://drive.google.com/drive/folders/1bgyqkfQCcTpGfbktc75gJrN1j5tj7tJ9?usp=sharing"
-LOCAL_LOGS = "Logs"  # Local cache folder
+# -----------------------------
+# ✅ SETTINGS
+# -----------------------------
+BASE_PATH = "Logs"  # Logs folder after extraction
+DRIVE_ZIP_URL = "https://drive.google.com/uc?id=1bgyqkfQCcTpGfbktc75gJrN1j5tj7tJ9"  # ✅ REPLACE WITH YOUR ZIP LINK
+ZIP_PATH = "Logs.zip"
 
-# ---------- DOWNLOAD ONLY ONCE ----------
-@st.cache_resource
-def setup_logs():
-    if not os.path.exists(LOCAL_LOGS):
-        os.makedirs(LOCAL_LOGS, exist_ok=True)
-        st.info("⏳ Downloading Logs folder (only first time)...")
-        gdown.download_folder(DRIVE_URL, quiet=False, use_cookies=False)
-    return LOCAL_LOGS
+# -----------------------------
+# ✅ DOWNLOAD & EXTRACT LOGS (ONLY FIRST RUN)
+# -----------------------------
+def ensure_logs_available():
+    if not os.path.exists(BASE_PATH):
+        st.write("⏳ Downloading Logs.zip from Google Drive (first run only)...")
+        gdown.download(DRIVE_ZIP_URL, ZIP_PATH, quiet=False)
+        st.write("✅ Download complete! Extracting...")
+        with zipfile.ZipFile(ZIP_PATH, "r") as zip_ref:
+            zip_ref.extractall(".")
+        st.write("✅ Logs ready!")
 
-BASE_PATH = setup_logs()
+ensure_logs_available()
 
-# ---------- LOAD DATA (ONLY LOCAL FILES) ----------
+# -----------------------------
+# ✅ DATA LOADING FUNCTION
+# -----------------------------
 @st.cache_data
 def load_all_data(base_path):
     """Reads all CSVs, adds Day/Night classification, and links images."""
@@ -36,9 +44,7 @@ def load_all_data(base_path):
             if not os.path.isdir(folder_path):
                 continue
 
-            csv_files = sorted(
-                [f for f in os.listdir(folder_path) if f.endswith(".csv")]
-            )
+            csv_files = sorted([f for f in os.listdir(folder_path) if f.endswith(".csv")])
 
             for i, csv_file in enumerate(csv_files):
                 csv_path = os.path.join(folder_path, csv_file)
@@ -49,16 +55,14 @@ def load_all_data(base_path):
 
                     df["date"] = pd.to_datetime(folder, format="%d-%m-%Y").date()
 
-                    # ---------- ENTRY ----------
+                    # ---------- ENTRY LOGIC ----------
                     if mode == "entry":
-                        df["time_of_day"] = (
-                            "Night" if i >= len(csv_files) - 3 else "Day"
-                        )
+                        df["time_of_day"] = "Night" if i >= len(csv_files) - 3 else "Day"
                         csv_prefix = csv_file.split("_entry_log")[0]
                         images_folder = os.path.join(folder_path, f"{csv_prefix}_images")
 
-                    # ---------- EXIT ----------
-                    else:
+                    # ---------- EXIT LOGIC ----------
+                    else:  # exit
                         if csv_file.startswith("night_exit_log"):
                             df["time_of_day"] = "Night"
                             images_folder = os.path.join(folder_path, "night_images")
@@ -69,10 +73,8 @@ def load_all_data(base_path):
                     if "plate" not in df.columns:
                         df["plate"] = None
 
-                    if os.path.exists(images_folder):
-                        df["image_path"] = df["image"].apply(
-                            lambda x: os.path.join(images_folder, x)
-                        )
+                    if images_folder and os.path.exists(images_folder):
+                        df["image_path"] = df["image"].apply(lambda x: os.path.join(images_folder, x))
                     else:
                         df["image_path"] = None
 
@@ -84,7 +86,9 @@ def load_all_data(base_path):
 
     return pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
 
-# ---------- LOAD DATA ----------
+# -----------------------------
+# ✅ LOAD DATA
+# -----------------------------
 df_all = load_all_data(BASE_PATH)
 
 st.title("🚗 Vehicle Entry/Exit Dashboard")
@@ -93,7 +97,9 @@ if df_all.empty:
     st.warning("No valid data found!")
     st.stop()
 
-# ---------- FILTERS ----------
+# -----------------------------
+# ✅ FILTERS
+# -----------------------------
 st.sidebar.header("Filters")
 
 available_dates = sorted(df_all["date"].unique())
@@ -109,10 +115,14 @@ filtered_df = df_all[
     & (df_all["mode"].isin(selected_mode))
 ]
 
-# ---------- KPI ----------
+# -----------------------------
+# ✅ KPI METRICS
+# -----------------------------
 st.metric("Total Vehicles", len(filtered_df))
 
-# ---------- MATPLOTLIB GRAPH ----------
+# -----------------------------
+# ✅ DAILY TREND (MATPLOTLIB)
+# -----------------------------
 daily_counts = (
     filtered_df.groupby(["date", "time_of_day", "mode"])
     .size()
@@ -127,6 +137,7 @@ if not daily_counts.empty:
             continue
 
         pivot_df = mode_data.pivot(index="date", columns="time_of_day", values="vehicle_count").fillna(0)
+
         fig, ax = plt.subplots(figsize=(8, 4))
         pivot_df.plot(kind="bar", ax=ax, color=["#1f77b4", "#ff7f0e"])
         ax.set_title(f"{mode} Vehicles")
@@ -136,24 +147,33 @@ if not daily_counts.empty:
         ax.legend(title="Time of Day")
         st.pyplot(fig)
 
-# ---------- TABLE ----------
+# -----------------------------
+# ✅ TABLE WITH MULTIPLE SELECTION
+# -----------------------------
 st.subheader("📋 Vehicles Table (Select to View Images)")
 
 if not filtered_df.empty:
     table_df = filtered_df[["id", "plate", "mode", "date", "time_of_day", "image_path"]].reset_index(drop=True)
+
     if "selected_rows" not in st.session_state:
         st.session_state.selected_rows = []
+
     table_df["View Image"] = table_df.index.isin(st.session_state.selected_rows)
 
     edited_df = st.data_editor(
         table_df.drop(columns=["image_path"]),
         column_config={
-            "View Image": st.column_config.CheckboxColumn("🔍 Select to View Image", help="Select multiple", default=False)
+            "View Image": st.column_config.CheckboxColumn(
+                "🔍 Select to View Image",
+                help="You can select multiple vehicles",
+                default=False,
+            )
         },
         hide_index=True,
         use_container_width=True,
         key="table_editor",
     )
+
     st.session_state.selected_rows = list(edited_df[edited_df["View Image"] == True].index)
 
     if st.button("🧹 Clear All Selections"):
@@ -165,10 +185,15 @@ if not filtered_df.empty:
         for idx in st.session_state.selected_rows:
             row = table_df.loc[idx]
             if row["image_path"] and os.path.exists(row["image_path"]):
-                st.image(row["image_path"], width=300,
-                         caption=f"{row['mode']} | Vehicle ID: {row['id']} | Plate: {row['plate']}")
+                st.image(
+                    row["image_path"],
+                    width=300,
+                    caption=f"{row['mode']} | Vehicle ID: {row['id']} | Plate: {row['plate']}",
+                )
             else:
-                st.warning(f"No image available for {row['mode']} | Vehicle ID: {row['id']} | Plate: {row['plate']}")
+                st.warning(
+                    f"No image available for {row['mode']} | Vehicle ID: {row['id']} | Plate: {row['plate']}"
+                )
     else:
         st.info("Select one or more vehicles to view their images.")
 else:
